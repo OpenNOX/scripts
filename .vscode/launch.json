@@ -1,18 +1,21 @@
 {
-  // Use IntelliSense to learn about possible attributes.
-  // Hover to view descriptions of existing attributes.
-  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "type": "node",
-      "request": "launch",
-      "name": "Run Current File",
-      "program": "${file}",
-      "args": [
-        "./data/ca_staff_eds.json",
-        "./data/Staff_JSON_Paths.json"
-      ]
-    }
-  ]
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "PowerShell",
+            "request": "launch",
+            "name": "[PowerShell] Run Current File",
+            "script": "${file}"
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "[Node] Run Current File",
+            "program": "${file}",
+            "args": [
+                "./data/ca_staff_eds.json",
+                "./data/Staff_JSON_Paths.json"
+            ]
+        }
+    ]
 }
