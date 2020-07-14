@@ -5,7 +5,10 @@
             "type": "PowerShell",
             "request": "launch",
             "name": "[PowerShell] Run Current File",
-            "script": "${file}"
+            "script": "${file}",
+            "args": [
+                "-SkipAzAuth"
+            ]
         },
         {
             "type": "node",
