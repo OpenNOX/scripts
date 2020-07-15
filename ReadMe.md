@@ -23,3 +23,5 @@
     * **Outputs:**
         * **Logic Apps Run History (Raw).csv -** Contains all Logic App execution history for each of the Logic Apps listed in the `InputCsv`.
         * **Logic Apps Run History (Report).csv -** Contains a more human-readable report of the Logic App execution history for each of the Logic Apps listed in the `InputCsv`.
+    * **To Dos:**
+        * Further refactor the script to not store all Logic App Run History in memory, but instead have it write to the respective generated output files. This will ensure that if the Logic App List CSV grows that the machine that is running it will not run out of memory.
