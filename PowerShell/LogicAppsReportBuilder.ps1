@@ -1,96 +1,111 @@
 Param
 (
-    [Parameter(Mandatory=$false, Position=0,
-        HelpMessage="File path to the input CSV that contains Logic App details to loop over and build a report from.")]
-    [string]$InputCsv = "./inputs/Logic Apps List.csv",
-    [Parameter(Mandatory=$false, Position=1,
-        HelpMessage="File path to the directory of where to output the generated CSV files.")]
-    [string]$OutputDir = "$($env:UserProfile)/Desktop",
-    [Parameter(Mandatory=$false, Position=3,
-        HelpMessage="Skip Azure authentication?")]
-    [switch]$SkipAzAuth
+    [Parameter()]
+    [string] $InputCsvPath = "$((Get-Location).Path)\inputs\Logic Apps List.csv",
+    [Parameter()]
+    [string] $OutputDir = "$((Get-Location).Path)\outputs",
+    [Parameter()]
+    [int32] $ThresholdOffset = 0,
+    [Parameter()]
+    [switch] $SkipAzAuth,
+    [Parameter()]
+    [switch] $SkipAzData
 )
 
-Function Get-FilteredRunHistory([DateTime]$startTimeThreshold, [string]$inputCsv)
+
+#
+# Get Timestamp - Returns formatted timestamp.
+#
+Function Get-Timestamp
 {
-    $allFilteredRunHistory = New-Object System.Collections.ArrayList
-    $subscriptionIndex = 0
+    return "[{0:yy.MM.dd} {0:HH:mm:ss}]" -f (Get-Date)
+}
 
-    # Ignore records that have a Subscription ID that begins with a hash symbol.
-    $logicAppList = Import-Csv $inputCsv | Where-Object { $_.SubscriptionId -notlike "#*" }
-    $groupedLogicAppList = $logicAppList | Group-Object "SubscriptionId"
 
-    foreach ($logicAppGroup in $groupedLogicAppList)
+#
+# Write Azure Data to CSV - Write filtered Logic App run history to OutputCsvPath.
+#
+Function Write-AzureDataToCsv([Object[]] $LogicAppList, [string] $OutputCsvPath, [int32] $ThresholdOffset)
+{
+    New-Item -ItemType File -Path $OutputCsvPath -Force | Out-Null
+    Add-Content -Path $OutputCsvPath -Value "CustomerName,Direction,LogicAppName,State,RunId,StartTime,EndTime,RunStatus"
+
+    $groupedLogicAppList = $LogicAppList | Group-Object { $_.SubscriptionId }
+
+    # Filter Logic App run history to only show executions that occurred between
+    # 12:00pm today and 12:00pm (Local Time) tomorrow.
+    $logicAppStartTimeThreshold = (Get-Date).Date.AddDays(-$ThresholdOffset).AddHours(12)
+
+    # If running before 6:00pm (Local Time) and ThresholdOffset is equal to 0
+    # show yesterday's run history.
+    if ((Get-Date) -lt (Get-Date).Date.AddHours(18) -and $ThresholdOffset -eq 0)
     {
-        $subscriptionIndex += 1
+        $logicAppStartTimeThreshold = $logicAppStartTimeThreshold.AddDays(-1)
+    }
 
-        Write-Host("Changing Azure Subscription Context... (Subscription $($subscriptionIndex) of $($groupedLogicAppList.length) [ID: $($logicAppGroup.Name)])")
-        Set-AzContext -SubscriptionId $logicAppGroup.Name | Out-Null
-        Write-Host("Auzre Subscription Context Successfully Changed!")
+    Write-Host("$(Get-Timestamp) Retrieving run history for $($LogicAppList.Count) Logic Apps in $($groupedLogicAppList.Count) Subscriptions...")
+    Write-Host("$(Get-Timestamp) Logic App run history will be filtered by StartTime that ranges between $($logicAppStartTimeThreshold) and $($logicAppStartTimeThreshold.AddDays(1))")
 
-        foreach ($logicApp in $logicAppGroup.Group)
+    $currentSubscriptionIndex = 0
+    $currentLogicAppIndex = 0
+    foreach ($subscriptionGroup in $groupedLogicAppList)
+    {
+        $currentSubscriptionIndex += 1
+
+        Write-Host("$(Get-Timestamp) Updating Azure Subscription context to be $($subscriptionGroup.Name)... ($($currentSubscriptionIndex) of $($groupedLogicAppList.Count))")
+        Set-AzContext -SubscriptionId $subscriptionGroup.Name | Out-Null
+        Write-Host("$(Get-Timestamp) Azure Subscription context successfully updated!")
+
+        foreach ($logicApp in $subscriptionGroup.Group)
         {
-            $logicAppIndex += 1
+            $currentLogicAppIndex += 1
 
-            Write-Host("Getting Logic App Details and Run History... (Logic App $($logicAppIndex) of $($logicAppList.Count) [Name: $($logicApp.LogicAppName)])")
+            Write-Host("$(Get-Timestamp) Retrieving Logic App details and run history for $($logicApp.LogicAppName)... ($($currentLogicAppIndex) of $($LogicAppList.Count))")
 
             $logicAppDetails = Get-AzLogicApp -ResourceGroupName $logicApp.ResourceGroupName `
                 -Name $logicApp.LogicAppName
-
             $filteredRunHistory = Get-AzLogicAppRunHistory -ResourceGroupName $logicApp.ResourceGroupName `
                 -Name $logicApp.LogicAppName |
-                    Where-Object { [DateTime]$_.StartTime -ge $startTimeThreshold -and [DateTime]$_.StartTime -le $startTimeThreshold.AddDays(1) }
+                    Where-Object { [DateTime] $_.StartTime -ge $logicAppStartTimeThreshold -and [DateTime] $_.StartTime -le $logicAppStartTimeThreshold.AddDays(1) }
 
-            Write-Host("Logic App Details and Run History Received!")
+            Write-Host("$(Get-Timestamp) Successfully retrieved Logic App details and run history!")
 
             if ($filteredRunHistory)
             {
                 foreach ($runHistory in $filteredRunHistory)
                 {
-                    $allFilteredRunHistory.Add(@{
-                        CustomerName = $logicApp.CustomerName
-                        Direction = $logicApp.Direction
-                        LogicAppName = $logicApp.LogicAppName
-                        State = $logicAppDetails.State
-                        RunId = $runHistory.Name
-                        StartTime = $runHistory.StartTime
-                        EndTime = $runHistory.EndTime
-                        Status = $runHistory.Status
-                    }) | Out-Null
+                    Add-Content -Path $OutputCsvPath `
+                        -Value "$($logicApp.CustomerName),$($logicApp.Direction),$($logicApp.LogicAppName),$($logicAppDetails.State),$($runHistory.Name),$($runHistory.StartTime),$($runHistory.EndTime),$($runHistory.Status)"
                 }
             }
             else
             {
-                $allFilteredRunHistory.Add(@{
-                    CustomerName = $logicApp.CustomerName
-                    Direction = $logicApp.Direction
-                    LogicAppName = $logicApp.LogicAppName
-                    State = $logicAppDetails.State
-                    RunId = "N/A"
-                    StartTime = "N/A"
-                    EndTime = "N/A"
-                    Status = "No Executions"
-                }) | Out-Null
+                Add-Content -Path $OutputCsvPath `
+                    -Value "$($logicApp.CustomerName),$($logicApp.Direction),$($logicApp.LogicAppName),$($logicAppDetails.State),N/A,N/A,N/A,N/A"
             }
         }
     }
 
-    return $allFilteredRunHistory
+    Write-Host("$(Get-Timestamp) All run history successfully retrieved!")
 }
 
-Function Get-ReportData([Object[]]$runHistory)
-{
-    $reportData = New-Object System.Collections.ArrayList
 
-    $filteredRunHistory | Group-Object { $_.CustomerName } | ForEach-Object `
+#
+# Write Report to CSV - Write report on Logic App run history.
+#
+Function Write-ReportToCsv([string] $DataCsvPath, [string] $ReportCsvPath, [string[]] $SortOrder)
+{
+    New-Item -ItemType File -Path $ReportCsvPath -Force | Out-Null
+    Add-Content -Path $ReportCsvPath -Value "CustomerName,InboundStartTime,InboundStarted,InboundSucceeded,OutboundStartTime,OutboundStarted,OutboundSucceeded"
+
+    Import-Csv $DataCsvPath | Group-Object { $_.CustomerName } | Sort-Object { $SortOrder.IndexOf($_.Name) } | ForEach-Object `
     {
-        $customerReport = @{
+        $reportLine = @{
             CustomerName = $_.Name
         }
 
         $_.Group | Group-Object { $_.Direction } | ForEach-Object `
         {
-            $direction = $_.Name
             $earliestExecution = $_.Group | Sort-Object { $_.StartTime } | Select-Object -First 1
             $earliestStartTime = $earliestExecution.StartTime
             $logicAppState = $earliestExecution.State
@@ -99,7 +114,7 @@ Function Get-ReportData([Object[]]$runHistory)
             $startedReport = ""
             $succeededReport = ""
 
-            $_.Group | Group-Object { $_.Status } | ForEach-Object `
+            $_.Group | Group-Object { $_.RunStatus } | ForEach-Object `
             {
                 if ($_.Name -eq "Succeeded")
                 {
@@ -132,71 +147,59 @@ Function Get-ReportData([Object[]]$runHistory)
                 $succeededReport = "P"
             }
 
-            if ($direction -eq "Inbound")
+            if ($_.Name -eq "Inbound")
             {
-                $customerReport.Add("EarliestInboundStartTime", $earliestStartTime)
-                $customerReport.Add("InboundStarted", $startedReport)
-                $customerReport.Add("InboundSucceeded", $succeededReport)
+                $reportLine.Add("EarliestInboundStartTime", $earliestStartTime)
+                $reportLine.Add("InboundStarted", $startedReport)
+                $reportLine.Add("InboundSucceeded", $succeededReport)
             }
-            else
+            elseif ($_.Name -eq "Outbound")
             {
-                $customerReport.Add("EarliestOutboundStartTime", $earliestStartTime)
-                $customerReport.Add("OutboundStarted", $startedReport)
-                $customerReport.Add("OutboundSucceeded", $succeededReport)
+                $reportLine.Add("EarliestOutboundStartTime", $earliestStartTime)
+                $reportLine.Add("OutboundStarted", $startedReport)
+                $reportLine.Add("OutboundSucceeded", $succeededReport)
             }
         }
 
-        $reportData.Add($customerReport)
+        Add-Content -Path $ReportCsvPath `
+            -Value "$($reportLine.CustomerName),$($reportLine.EarliestInboundStartTime),$($reportLine.InboundStarted),$($reportLine.InboundSucceeded),$($reportLine.EarliestOutboundStartTime),$($reportLine.OutboundStarted),$($reportLine.OutboundSucceeded)"
     }
-
-    return $reportData
 }
 
 
 # # # # # # # # # # # # # #
 #                         #
-#  SCRIPT'S ENTRY POINT   #
+#   Script Entry Point    #
 #                         #
 # # # # # # # # # # # # # #
 
 
-if (-Not $SkipAzAuth.IsPresent)
+Write-Host("$(Get-Timestamp) Now running Logic Apps Report Builder...")
+Write-Host("$(Get-Timestamp) Input CSV File Path -> $($InputCsvPath)")
+Write-Host("$(Get-Timestamp) Output Directory -> $($OutputDir)")
+
+$dataCsvPath = "$($OutputDir)\Logic Apps Run History (Raw).csv"
+$reportCsvPath = "$($OutputDir)\Logic Apps Run History (Report).csv"
+
+# Ignore records that have a Subscription ID that begins with a hash symbol.
+$logicAppList = Import-Csv $InputCsvPath | Where-Object { $_.SubscriptionId -notlike "#*" }
+
+if (-Not $SkipAzData.IsPresent)
 {
-    Connect-AzAccount
-}
-
-# Filter Logic App executions to only show runs that occurred after 12:00pm
-# (Local Time) today.
-$startTimeThreshold = (Get-Date).Date.AddHours(12)
-
-# If running before 6:00pm (Local Time) show yesterday's executions.
-if ((Get-Date) -lt (Get-Date).Date.AddHours(18))
-{
-    $startTimeThreshold = $startTimeThreshold.AddDays(-1)
-}
-
-$filteredRunHistory = Get-FilteredRunHistory -startTimeThreshold $startTimeThreshold -inputCsv $InputCsv
-$reportData = Get-ReportData($filteredRunHistory) | Sort-Object { $_.EarliestInboundStartTime }
-
-# Output Raw CSV.
-$outputCsv = New-Object IO.StreamWriter("$($OutputDir)/Logic Apps Run History (Raw).csv")
-$outputCsv.WriteLine("CustomerName,Direction,LogicAppName,State,RunId,StartTime,EndTime,RunStatus")
-foreach ($runHistory in $filteredRunHistory)
-{
-    $outputCsv.WriteLine("$($runHistory.CustomerName),$($runHistory.Direction),$($runHistory.LogicAppName),$($runHistory.State),$($runHistory.RunId),$($runHistory.StartTime),$($runHistory.EndTime),$($runHistory.Status)")
-}
-$outputCsv.Close()
-
-# Output Report CSV.
-$outputCsv = New-Object IO.StreamWriter("$($OutputDir)/Logic Apps Run History (Report).csv")
-$outputCsv.WriteLine("CustomerName,InboundStartTime,InboundStarted,InboundSucceeded,OutboundStartTime,OutboundStarted,OutboundSucceeded")
-foreach($customer in $reportData)
-{
-    if ($customer.GetType().Name -eq "Hashtable")
+    if (-Not $SkipAzAuth.IsPresent)
     {
-        $outputCsv.WriteLine("$($customer.CustomerName),$($customer.EarliestInboundStartTime),$($customer.InboundStarted),$($customer.InboundSucceeded),$($customer.EarliestOutboundStartTime),$($customer.OutboundStarted),$($customer.OutboundSucceeded)")
+        Write-Host("$(Get-Timestamp) Waiting for Azure authentication...")
+        Connect-AzAccount | Out-Null
     }
-}
-$outputCsv.Close()
 
+    Write-AzureDataToCsv -LogicAppList $logicAppList `
+        -OutputCsvPath $dataCsvPath `
+        -ThresholdOffset $ThresholdOffset
+}
+
+Write-ReportToCsv -DataCsvPath $dataCsvPath `
+    -ReportCsvPath $reportCsvPath `
+    -SortOrder ($logicAppList | Group-Object { $_.CustomerName } | Select-Object -ExpandProperty Name)
+
+Write-Host("$(Get-Timestamp) Logic Apps Report Build has been successfully run!")
 Write-Host("")
