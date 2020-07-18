@@ -23,12 +23,46 @@ Function Get-Timestamp
 
 
 #
-# Write Azure Data to CSV - Write filtered Logic App run history to OutputCsvPath.
+# Get Failed Actions Output - Recursively retrieve failed action outputs.
 #
-Function Write-AzureDataToCsv([Object[]] $LogicAppList, [string] $OutputCsvPath, [int32] $ThresholdOffset)
+Function Write-FailedActionOutputs([string] $FailedCsvPath, [string] $CustomerName, [string] $ResourceGroupName, [string] $LogicAppName, [string] $RunId)
 {
-    New-Item -ItemType File -Path $OutputCsvPath -Force | Out-Null
-    Add-Content -Path $OutputCsvPath -Value "CustomerName,Direction,LogicAppName,State,RunId,StartTime,EndTime,RunStatus"
+    Get-AzLogicAppRunAction -ResourceGroupName $ResourceGroupName -Name $LogicAppName -RunName $RunId `
+        | Where-Object { $_.Status -eq "Failed" } | ForEach-Object `
+        {
+            $inputs = (Invoke-WebRequest -Uri $_.InputsLink.Uri).Content | ConvertFrom-Json
+            $outputs = (Invoke-WebRequest -Uri $_.OutputsLink.Uri).Content | ConvertFrom-Json
+
+            if ($inputs.psobject.Properties["host"] -and $inputs.host.psobject.Properties["triggerName"] -and $inputs.host.triggerName -eq "manual")
+            {
+                $logicAppName = $outputs.headers.psobject.Members["x-ms-workflow-name"].Value
+                $runId = $outputs.headers.psobject.Members["x-ms-workflow-run-id"].Value
+
+                Write-Host("$(Get-Timestamp) Retrieving failed nested Logic App (Name: $($logicAppName)) runs failed action outputs for $($runId)...")
+                Write-FailedActionOutputs -FailedCsvPath $FailedCsvPath `
+                    -CustomerName $CustomerName `
+                    -ResourceGroupName $ResourceGroupName `
+                    -LogicAppName  $logicAppName `
+                    -RunId $runId
+            }
+            else
+            {
+                Add-Content -Path $FailedCsvPath `
+                    -Value "$($CustomerName),$($LogicAppName),$($RunId),""$($outputs.body.message)"",""$($outputs.body.stack)"",$($_.OutputsLink.Uri)"
+            }
+        }
+}
+
+
+#
+# Write Azure Data to CSV - Write filtered Logic App run history to DataCsvPath.
+#
+Function Write-AzureDataToCsv([Object[]] $LogicAppList, [string] $DataCsvPath, [string] $FailedCsvPath, [int32] $ThresholdOffset)
+{
+    New-Item -ItemType File -Path $DataCsvPath -Force | Out-Null
+    Add-Content -Path $DataCsvPath -Value "CustomerName,Direction,LogicAppName,State,RunId,StartTime,EndTime,RunStatus"
+    New-Item -ItemType File -Path $FailedCsvPath -Force | Out-Null
+    Add-Content -Path $FailedCsvPath -Value "CustomerName,LogicAppName,RunId,Message,Stack,OutputUrl"
 
     $groupedLogicAppList = $LogicAppList | Group-Object { $_.SubscriptionId }
 
@@ -65,22 +99,43 @@ Function Write-AzureDataToCsv([Object[]] $LogicAppList, [string] $OutputCsvPath,
             $logicAppDetails = Get-AzLogicApp -ResourceGroupName $logicApp.ResourceGroupName `
                 -Name $logicApp.LogicAppName
             $filteredRunHistory = Get-AzLogicAppRunHistory -ResourceGroupName $logicApp.ResourceGroupName `
-                -Name $logicApp.LogicAppName |
-                    Where-Object { [DateTime] $_.StartTime -ge $logicAppStartTimeThreshold -and [DateTime] $_.StartTime -le $logicAppStartTimeThreshold.AddDays(1) }
+                -Name $logicApp.LogicAppName `
+                | Where-Object `
+                { `
+                    [DateTime] $_.StartTime -ge $logicAppStartTimeThreshold `
+                    -and `
+                    [DateTime] $_.StartTime -le $logicAppStartTimeThreshold.AddDays(1) `
+                }
 
             Write-Host("$(Get-Timestamp) Successfully retrieved Logic App details and run history!")
 
             if ($filteredRunHistory)
             {
+                $currentFailedRunIndex = 0
+                $failedRunCount = ($filteredRunHistory | Where-Object { $_.Status -eq "Failed" }).Count
+
                 foreach ($runHistory in $filteredRunHistory)
                 {
-                    Add-Content -Path $OutputCsvPath `
+                    if ($runHistory.Status -eq "Failed")
+                    {
+                        $currentFailedRunIndex += 1
+
+                        Write-Host("$(Get-Timestamp) Retrieving failed Logic App runs failed action outputs for $($runHistory.Name)... ($($currentFailedRunIndex) of $($failedRunCount))")
+                        Write-FailedActionOutputs -FailedCsvPath $FailedCsvPath `
+                            -CustomerName $logicApp.CustomerName `
+                            -ResourceGroupName $logicApp.ResourceGroupName `
+                            -LogicAppName $logicApp.LogicAppName `
+                            -RunId $runHistory.Name
+                        Write-Host("$(Get-Timestamp) Logic App runs failed action outputs successfully retrieved!")
+                    }
+
+                    Add-Content -Path $DataCsvPath `
                         -Value "$($logicApp.CustomerName),$($logicApp.Direction),$($logicApp.LogicAppName),$($logicAppDetails.State),$($runHistory.Name),$($runHistory.StartTime),$($runHistory.EndTime),$($runHistory.Status)"
                 }
             }
             else
             {
-                Add-Content -Path $OutputCsvPath `
+                Add-Content -Path $DataCsvPath `
                     -Value "$($logicApp.CustomerName),$($logicApp.Direction),$($logicApp.LogicAppName),$($logicAppDetails.State),N/A,N/A,N/A,N/A"
             }
         }
@@ -93,7 +148,7 @@ Function Write-AzureDataToCsv([Object[]] $LogicAppList, [string] $OutputCsvPath,
 #
 # Write Report to CSV - Write report on Logic App run history.
 #
-Function Write-ReportToCsv([string] $DataCsvPath, [string] $ReportCsvPath, [string[]] $SortOrder)
+Function Write-Report([string] $DataCsvPath, [string] $ReportCsvPath, [string[]] $SortOrder)
 {
     New-Item -ItemType File -Path $ReportCsvPath -Force | Out-Null
     Add-Content -Path $ReportCsvPath -Value "CustomerName,InboundStartTime,InboundStarted,InboundSucceeded,OutboundStartTime,OutboundStarted,OutboundSucceeded"
@@ -178,7 +233,8 @@ Write-Host("$(Get-Timestamp) Now running Logic Apps Report Builder...")
 Write-Host("$(Get-Timestamp) Input CSV File Path -> $($InputCsvPath)")
 Write-Host("$(Get-Timestamp) Output Directory -> $($OutputDir)")
 
-$dataCsvPath = "$($OutputDir)\Logic Apps Run History (Raw).csv"
+$dataCsvPath = "$($OutputDir)\Logic Apps Run History (Data).csv"
+$failedCsvPath = "$($OutputDir)\Logic Apps Run History (Failed).csv"
 $reportCsvPath = "$($OutputDir)\Logic Apps Run History (Report).csv"
 
 # Ignore records that have a Subscription ID that begins with a hash symbol.
@@ -193,11 +249,13 @@ if (-Not $SkipAzData.IsPresent)
     }
 
     Write-AzureDataToCsv -LogicAppList $logicAppList `
-        -OutputCsvPath $dataCsvPath `
+        -DataCsvPath $dataCsvPath `
+        -FailedCsvPath $failedCsvPath `
         -ThresholdOffset $ThresholdOffset
 }
 
-Write-ReportToCsv -DataCsvPath $dataCsvPath `
+# Sort report output order by the Logic App List order.
+Write-Report -DataCsvPath $dataCsvPath `
     -ReportCsvPath $reportCsvPath `
     -SortOrder ($logicAppList | Group-Object { $_.CustomerName } | Select-Object -ExpandProperty Name)
 

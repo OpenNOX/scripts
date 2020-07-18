@@ -7,7 +7,8 @@
             "name": "[PowerShell] Run Current File",
             "script": "${file}",
             "args": [
-                "-SkipAzAuth"
+                "-SkipAzAuth",
+                "-ThresholdOffset", "2"
             ]
         },
         {

@@ -27,3 +27,5 @@
     * **Outputs:**
         * **Logic Apps Run History (Raw).csv -** Logic App run history for each of the Logic Apps listed in the `InputCsvPath`.
         * **Logic Apps Run History (Report).csv -** Formatted report of the raw Logic App run history details.
+    * **To Dos:**
+        * Implement a method that checks if it follows a pattern from previous runs, such as having a configurable number of days to look back and if they match the "Matches Pattern" is true.
