@@ -10,16 +10,6 @@
                 "-SkipAzAuth",
                 "-ThresholdOffset", "2"
             ]
-        },
-        {
-            "type": "node",
-            "request": "launch",
-            "name": "[Node] Run Current File",
-            "program": "${file}",
-            "args": [
-                "./data/ca_staff_eds.json",
-                "./data/Staff_JSON_Paths.json"
-            ]
         }
     ]
 }

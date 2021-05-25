@@ -1,7 +1,3 @@
-inputs/
-node_modules/
-outputs/
-
 *.ignore*
 *.csv
 *.log

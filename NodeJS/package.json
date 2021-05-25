@@ -1,6 +1,0 @@
-{
-  "dependencies": {
-    "googleapis": "^37.2.0",
-    "jsonpath": "^1.0.0"
-  }
-}
