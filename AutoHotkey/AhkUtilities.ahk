@@ -12,10 +12,12 @@ Menu, Tray, Add, `tToggle Anti-Idle, ToggleAntiIdle
 Menu, Tray, Add
 Menu, Tray, Add, ---- Context-Specific Hotkeys ----, DummyLabel
 Menu, Tray, Disable, ---- Context-Specific Hotkeys ----
-Menu, Tray, Add, (Alt + Shift + \)`tToggle Active Window Always-On-Top, ToggleActiveWindowAlwaysOnTop
+Menu, Tray, Add, (Alt + Shift + \)`tToggle Active Window Always-On-Top, DummyLabel
 Menu, Tray, Disable, (Alt + Shift + \)`tToggle Active Window Always-On-Top
-Menu, Tray, Add, (Alt + Shift + /)`tCopy && Web Search Clipboard, CopyAndWebSearchClipboard
+Menu, Tray, Add, (Alt + Shift + /)`tCopy && Web Search Clipboard, DummyLabel
 Menu, Tray, Disable, (Alt + Shift + /)`tCopy && Web Search Clipboard
+Menu, Tray, Add, (Alt + Shift + .)`tWrite Spark DataFrame to Common Path, DummyLabel
+Menu, Tray, Disable, (Alt + Shift + .)`tWrite Spark DataFrame to Common Path
 Menu, Tray, Add
 Menu, Tray, Add, Reload Script, ReloadScript
 Menu, Tray, Add, Exit Script, ExitScript
@@ -24,12 +26,26 @@ StartDiscordOnStartup()
 
 ; Alt + Shift + \
 !+\::
-    ToggleActiveWindowAlwaysOnTop()
+    ; Toggle active window's Always-On-Top status.
+    WinSet, AlwaysOnTop, Toggle, A
     return
 
 ; Alt + Shift + /
 !+/::
-    CopyAndWebSearchClipboard()
+    ; Copy highlighted text into clipboard and use it to web search.
+    Send, ^c
+    Sleep, 50
+    Run, https://www.google.com/search?q=%clipboard%
+    return
+
+; Alt + Shift + .
+!+.::
+    ; Write Apache Spark DataFrame to common path.
+    Send, {Shift down}{Home}{Shift up}^c{Right}
+    SendRaw, .WriteAsCsv("C:/dataFrames/
+    Send, ^v
+    SendRaw, ")
+    Send, {Enter}
     return
 
 DummyLabel:
@@ -46,7 +62,7 @@ AntiIdle:
     return
 
 ; Ensure that Discord starts minimized on computer startup when this script is
-;     run at startup
+;     run at startup.
 StartDiscordOnStartup()
 {
     if (FileExist("%A_AppData%\..\Local\Discord\Update.exe"))
@@ -63,7 +79,7 @@ StartDiscordOnStartup()
 }
 
 ; Move mouse back-and-forth 100 pixels every 2 minutes if physically idle for
-;     more than 2.5 minutes
+;     more than 2.5 minutes.
 ToggleAntiIdle()
 {
     static isChecked = false
@@ -80,20 +96,6 @@ ToggleAntiIdle()
 
         SetTimer, AntiIdle, 120000
     }
-}
-
-; Toggle active window's Always-On-Top status
-ToggleActiveWindowAlwaysOnTop()
-{
-    WinSet, AlwaysOnTop, Toggle, A
-}
-
-; Copy highlighted text into clipboard and use it to web search
-CopyAndWebSearchClipboard()
-{
-    Send, ^c
-    Sleep, 50
-    Run, https://www.google.com/search?q=%clipboard%
 }
 
 ; Reload this script
