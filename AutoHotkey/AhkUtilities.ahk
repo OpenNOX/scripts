@@ -2,8 +2,8 @@
 #Persistent
 #SingleInstance, force
 DetectHiddenWindows, Off
-SendMode Input
-SetWorkingDir %A_ScriptDir%
+SendMode, Input
+SetWorkingDir, %A_ScriptDir%
 SetTitleMatchMode, 2
 SetTitleMatchMode, Fast
 
@@ -28,7 +28,7 @@ StartDiscordOnStartup()
 !+\::
     ; Toggle active window's Always-On-Top status.
     WinSet, AlwaysOnTop, Toggle, A
-    return
+    Return
 
 ; Alt + Shift + /
 !+/::
@@ -36,20 +36,17 @@ StartDiscordOnStartup()
     Send, ^c
     Sleep, 50
     Run, https://www.google.com/search?q=%clipboard%
-    return
+    Return
 
+#MaxThreadsPerHotkey, 2
 ; Alt + Shift + .
 !+.::
-    ; Write Apache Spark DataFrame to common path.
-    Send, {Shift down}{Home}{Shift up}^c{Right}
-    SendRaw, .WriteAsCsv("C:/dataFrames/
-    Send, ^v
-    SendRaw, ")
-    Send, {Enter}
-    return
+    WriteDataFrameToCsv()
+    Return
+#MaxThreadsPerHotkey, 1
 
 DummyLabel:
-    return
+    Return
 
 AntiIdle:
     if (A_TimeIdlePhysical > 150000)
@@ -58,8 +55,7 @@ AntiIdle:
         Sleep, 500
         MouseMove, -100, -100, , R
     }
-
-    return
+    Return
 
 ; Ensure that Discord starts minimized on computer startup when this script is
 ;     run at startup.
@@ -75,6 +71,58 @@ StartDiscordOnStartup()
             WinWait, ahk_exe Discord.exe, , , Discord Updater
             WinClose, ahk_exe Discord.exe
         }
+    }
+}
+
+WriteDataFrameToCsv()
+{
+    static IsAlreadyRunning := False
+
+    If (IsAlreadyRunning)
+    {
+        IsAlreadyRunning := False
+    }
+    Else
+    {
+        IsAlreadyRunning := True
+
+        ; Copy data frame name from debugger window.
+        Clipboard := ""
+        Send, {Shift down}{Home}{Shift up}^c{Right}
+        ClipWait, 1
+
+        DataFrameName := Clipboard
+        DataFramesDir := "C:/dataFrames/"
+        DataFrameDir := DataFramesDir . DataFrameName
+        DataFrameCsvPattern := DataFrameDir . "/*.csv"
+
+        ; Write data frame to common path.
+        CsvWriteCall := ".WriteAsCsv(""" . DataFrameDir . """)"
+        Send, %CsvWriteCall%{Enter}
+
+        ; Wait for data frame to be written.
+        WaitStartTime := A_TickCount
+        While, !FileExist(DataFrameCsvPattern)
+        {
+            ; 1. Handle if the hotkey was pressed before data frame written by returning early.
+            ; 2. Handle if the data frame takes longer than 1 minute to be written by returning early.
+            If (IsAlreadyRunning == False OR A_TickCount - WaitStartTime > 60000)
+            {
+                WriteDataFrameToCsv()
+                Return
+            }
+
+            Sleep, 250
+        }
+
+        ; Move and rename written data frame to common path.
+        Loop, Files, % DataFrameCsvPattern
+        {
+            FileMove, % A_LoopFileLongPath, % DataFrameDir . ".csv", 1
+        }
+
+        ; Delete data frame's created directory.
+        FileRemoveDir, % DataFrameDir, 1
     }
 }
 
